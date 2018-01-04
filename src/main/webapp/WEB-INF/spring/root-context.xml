@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans:beans xmlns="http://www.springframework.org/schema/security"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:beans="http://www.springframework.org/schema/beans"
+	xmlns:context="http://www.springframework.org/schema/context" xmlns:p="http://www.springframework.org/schema/p"
+	xmlns:security="http://www.springframework.org/schema/security"
+	xmlns:aop="http://www.springframework.org/schema/aop" xmlns:tx="http://www.springframework.org/schema/tx"
+	xmlns:c="http://www.springframework.org/schema/c"
+	xsi:schemaLocation="
+        http://www.springframework.org/schema/security 
+        http://www.springframework.org/schema/security/spring-security.xsd
+        http://www.springframework.org/schema/beans 
+        http://www.springframework.org/schema/beans/spring-beans.xsd
+        http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx-3.2.xsd
+        http://www.springframework.org/schema/context    http://www.springframework.org/schema/context/spring-context-3.2.xsd
+        http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-3.2.xsd">
+
+	<context:component-scan base-package="at.ac.ait.ecg.dao" />
+
+	<beans:bean id="propertyConfigurer"
+		class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer"
+		p:location="file:${CATALINA_HOME}/conf/ecg.properties" />
+
+	<beans:bean id="dataSource"
+		class="org.springframework.jdbc.datasource.DriverManagerDataSource"
+		p:driverClassName="${jdbc.driverClassName}" p:url="${jdbc.url}"
+		p:username="${jdbc.username}" p:password="${jdbc.password}">
+		<aop:scoped-proxy />
+	</beans:bean>
+
+	<beans:bean id="persistenceUnitManager"
+		class="org.springframework.orm.jpa.persistenceunit.DefaultPersistenceUnitManager">
+		<beans:property name="persistenceXmlLocations">
+			<beans:list>
+				<beans:value>classpath*:META-INF/persistence.xml</beans:value>
+			</beans:list>
+		</beans:property>
+		<beans:property name="defaultDataSource" ref="dataSource" />
+	</beans:bean>
+
+	<beans:bean id="entityManagerFactory"
+		class="org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean">
+		<beans:property name="persistenceUnitManager" ref="persistenceUnitManager" />
+		<beans:property name="persistenceUnitName" value="entityManager" />
+	</beans:bean>
+
+	<beans:bean id="transactionManager"
+		class="org.springframework.orm.jpa.JpaTransactionManager">
+		<beans:property name="entityManagerFactory" ref="entityManagerFactory" />
+		<beans:property name="dataSource" ref="dataSource" />
+
+	</beans:bean>
+
+	<tx:annotation-driven transaction-manager="transactionManager" />
+
+	<!-- Spring Mail -->
+	<beans:bean id="mailSender"
+		class="org.springframework.mail.javamail.JavaMailSenderImpl">
+		<beans:property name="host" value="${mail.host}" />
+		<beans:property name="port" value="${mail.port}" />
+		<beans:property name="username" value="${mail.username}" />
+		<beans:property name="password" value="${mail.password}" />
+		<beans:property name="javaMailProperties">
+			<beans:props>
+				<beans:prop key="mail.transport.protocol">smtp</beans:prop>
+				<beans:prop key="mail.smtp.auth">true</beans:prop>
+				<beans:prop key="mail.smtp.starttls.enable">true</beans:prop>
+				<beans:prop key="mail.debug">true</beans:prop>
+			</beans:props>
+		</beans:property>
+	</beans:bean>
+
+	<!-- Enable auto-wiring -->
+	<context:annotation-config />
+
+
+	<!-- Unsecured pages -->
+	<security:http security="none" pattern="/favicon.ico" />
+	<security:http security="none" pattern="/images/**" />
+	<security:http security="none" pattern="/css/**" />
+	<security:http security="none" pattern="/logout.jsp" />
+
+
+	<security:http>
+		<security:intercept-url pattern="/**" access="ROLE_USER,ROLE_ADMIN" />
+		<security:http-basic />
+		<security:logout
+ logout-success-url="/"
+ logout-url="/logout"
+ delete-cookies="JSESSIONID" />
+	</security:http>
+	
+
+	<!-- Handler deciding where to redirect user after successful login -->
+	<beans:bean id="successRedirectHandler"
+		class="org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler">
+		<beans:property name="defaultTargetUrl" value="/" />
+	</beans:bean>
+	<!-- Use the following for interpreting RelayState coming from unsolicited 
+		response as redirect URL: <beans:bean id="successRedirectHandler" class="org.springframework.security.saml.SAMLRelayStateSuccessHandler"> 
+		<beans:property name="defaultTargetUrl" value="/" /> </beans:bean> -->
+
+	<!-- Handler deciding where to redirect user after failed login -->
+	<beans:bean id="failureRedirectHandler"
+		class="org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler">
+		<beans:property name="useForward" value="true" />
+		<beans:property name="defaultFailureUrl" value="/error.jsp" />
+	</beans:bean>
+
+	<!-- Handler for successful logout -->
+	<beans:bean id="successLogoutHandler"
+		class="org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler">
+		<beans:property name="defaultTargetUrl" value="/logout.jsp" />
+	</beans:bean>
+
+	<security:authentication-manager alias="authenticationManager">
+
+		<!-- Register authentication manager for administration UI -->
+		<security:authentication-provider>
+		
+		<security:jdbc-user-service	data-source-ref="dataSource"
+			users-by-username-query="SELECT username,password,enabled FROM User WHERE username = ?"
+			authorities-by-username-query="SELECT username,authority FROM User WHERE username = ?" />
+			
+			<!-- 
+		<security:user-service id="adminInterfaceService">
+			<security:user name="admin" password="admin" authorities="ROLE_ADMIN" />
+
+			<security:user name="gschreier" password="gschreier" authorities="ROLE_USER" />
+			<security:user name="dhayn" password="dhayn" authorities="ROLE_USER" />
+			<security:user name="ebelyavskiy" password="ebelyavskiy" authorities="ROLE_USER" />
+			<security:user name="akumar" password="akumar" authorities="ROLE_USER" />		
+			<security:user name="afrydas" password="afrydas" authorities="ROLE_USER" />		
+			<security:user name="feiquiuong" password="feiquiuong" authorities="ROLE_USER" />		
+
+			<security:user name="dscherr" password="dscherr" authorities="ROLE_USER" />		
+			<security:user name="dzweiker" password="dzweiker" authorities="ROLE_USER" />		
+			
+			</security:user-service>-->
+		</security:authentication-provider> 
+	</security:authentication-manager>
+
+	<beans:bean id="webexpressionHandler" class="org.springframework.security.web.access.expression.DefaultWebSecurityExpressionHandler" /> 
+
+	<!-- Logout handler terminating local session -->
+	<beans:bean id="logoutHandler"
+		class="org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler">
+		<beans:property name="invalidateHttpSession" value="false" />
+	</beans:bean>
+</beans:beans>

@@ -1,2 +1,3 @@
-# ecg-classification
-ECG classification and visualization
+# ECG visualization and voting system
+
+ECG tools developed for PhysioNet CinC2017.
