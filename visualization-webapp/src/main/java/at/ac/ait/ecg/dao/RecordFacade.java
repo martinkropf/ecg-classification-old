@@ -41,14 +41,14 @@ public class RecordFacade extends AbstractFacade<Record> {
 
 	//get record for which user has not created an annotation yet
 	public List<Record> getNewRecordForUser(String username) {
-		Query q = entityManager.createQuery("from Record as record where record.reference='O' AND record.reference<>record.prediction AND record not in (select vote.record.id from Vote as vote where vote.user='" + username + "')");
+		Query q = entityManager.createQuery("from Record as record where record.reference<>record.prediction AND record not in (select vote.record.id from Vote as vote where vote.user='" + username + "')");
 
 		return q.getResultList();
 	}
 
 	//get record for which nobody has  created an annotation yet
 	public List<Record> getNewRecord() {
-		Query q = entityManager.createQuery("from Record as record where record.reference='O' AND record.reference<>record.prediction AND record not in (select vote.record.id from Vote as vote)");
+		Query q = entityManager.createQuery("from Record as record where record.reference<>record.prediction AND record not in (select vote.record.id from Vote as vote)");
 		return q.getResultList();
 	}
 	//get record by class from table reference

@@ -25,9 +25,6 @@ public class Record extends BaseEntity {
 	private String reference;
 	
 	@Column
-	private String referenceOriginal;
-	
-	@Column
 	private String prediction;
 	
     @OneToMany(fetch=FetchType.LAZY, cascade = CascadeType.ALL, mappedBy="record")
@@ -67,18 +64,6 @@ public class Record extends BaseEntity {
 
 	public void setReference(String reference) {
 		this.reference = reference;
-	}
-
-
-
-	public String getReferenceOriginal() {
-		return referenceOriginal;
-	}
-
-
-
-	public void setReferenceOriginal(String referenceOriginal) {
-		this.referenceOriginal = referenceOriginal;
 	}
 
 
