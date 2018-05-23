@@ -1,0 +1,765 @@
+function [types,rhythmres]=rhythmclass(seq,QRS,classes,amps,widths,fs,pars,avbeats)
+
+PLOT_FIGURE=0;
+
+% ##### beste HR ist wohl hr2_c1
+% #### siehe auch scatter plot hr2_c1 vs. ratioNormal45_100_c1
+
+noiseBeats=find(~isfinite(classes));
+noNoiseBeats=find(isfinite(classes));
+
+premrel=pars.rhythmclass.premrel;
+premabs=pars.rhythmclass.premabs;
+nnorm=pars.rhythmclass.nnorm;
+maxRationToMedianAmp=pars.rhythmclass.maxRationToMedianAmp;
+relBCIdiffCouplet=pars.rhythmclass.relBCIdiffCouplet;
+
+rhythmres=struct(...
+		'nsamp',length(seq),...
+		'hrtrt',nan,...														mittlere heart rate
+		'n_widths',nan,...
+		'n_amps',nan,...
+		'Nscs_1per10s',nan,...
+        'Nscs',nan,...														# SCs mit dieser MC
+        'majorel',nan,...													Prozentsatz an Events mit SC==1 innerhalb der majorclass
+        'otherel',nan,...													Prozentsatz an Events mit SC ungleich 1 innerhalb der majorclass
+        'sc_2',nan,...													Prozentsatz an Events mit SC ungleich 1 innerhalb der majorclass
+        'sc_3',nan,...													Prozentsatz an Events mit SC ungleich 1 innerhalb der majorclass
+        'sc_gini',nan,...												gini coefficient of frequency of subclasses, starts with nan
+		'longestNormalSeq',nan,...
+        'n_premajure',nan,...														# "premature atrial complex" of supraventricular origin
+        'NPa',nan,...														# "premature atrial complex" of sinus node origin (ohne kompensatorische Pause)
+        'NPv',nan,...														# "premature ventricular complex" of ventricular origin
+		'Nectopic',nan,...												# ectopic beats based on rules in avbeat
+		'ratioInterpolated',nan,...
+		'mean_mov_diff',nan,...
+		'ratio_mean_mov_diff_10',nan,...
+		'mean_mov_av_diff',nan,...
+		'hr1',nan,...
+		'nBeats',nan,...
+		'hr2',nan,...
+		'hr_diff',nan,...
+		'stds',nan,...
+		'iqrs',nan,...
+		'ratioNormal45_100',nan,...
+		'ratioNormal45_100_smooth',nan,...
+		'ratioFast120',nan,...
+		'ratioFast110',nan,...
+		'ratioFast105',nan,...
+		'ratioFast100',nan,...
+		'ratioFast95',nan,...
+		'ratioFast90',nan,...
+		'ratioSlow60',nan,...
+		'ratioSlow55',nan,...
+		'ratioSlow50',nan,...
+		'ratioSlow45',nan,...
+		'range10_90',nan,...
+		'range5_95',nan,...
+		'ratioRegular1',nan,...
+		'ratioRegular3',nan,...
+		'ratioRegular5',nan,...
+		'ratioRegular10',nan,...
+		'ratioRegular20',nan,...
+		'ratioRegular10_bestPart',nan,...
+		'ratioRegular10_worstPart',nan,...
+		'ratioRegular10_PartDiff',nan,...
+		'nPattern_1111',nan,...
+		'nPattern_1212',nan,...
+		'nPattern_1313',nan,...
+		'nPattern_1414',nan, ...
+		'nPattern_121212',nan,...
+		'nPattern_131313',nan,...
+		'nPattern_141414',nan,...
+		'nPattern_N1N1',nan,...
+		'nPattern_N1N1N1',nan,...
+		'nRPDR',nan,...
+		'nRPPR',nan,...
+		'nDDPP',nan,...
+		'nRPPDDR',nan,...
+		'nRPPDR',nan,...
+		'nRPRP',nan,...
+		'ratio_RPDR',nan,...
+		'ratio_RPPR',nan,...
+		'ratio_DDPP',nan,...
+		'ratio_RPPDDR',nan,...
+		'ratio_RPPDR',nan,...
+		'ratio_RPRP',nan,...
+		'nPatternMax',nan,...
+		'nPatternSum',nan,...
+		'ratioPatternMax',nan,...
+		'ratioPatternSum',nan,...
+		'nPattern_AD_in_Ns',nan,...
+		'iqr_irreg_RRs',nan,...
+		'n_hist_50',nan,...
+		'n_hist_20',nan,...
+		'n_hist_all',nan,...
+		'hist_n_diag',nan,...
+		'hist_ratio_diag',nan,...
+		'hr1_c1',nan,...
+		'nBeats_c1',nan,...
+		'hr2_c1',nan,...
+		'hr_diff_c1',nan,...
+		'stds_c1',nan,...
+		'iqrs_c1',nan,...
+		'ratioNormal45_100_c1',nan,...
+		'ratioNormal45_100_smooth_c1',nan,...
+		'ratioFast120_c1',nan,...
+		'ratioFast100_c1',nan,...
+		'ratioFast90_c1',nan,...
+		'ratioFast80_c1',nan,...
+		'ratioFast70_c1',nan,...
+		'ratioFast60_c1',nan,...
+		'ratioSlow60_c1',nan,...
+		'ratioSlow55_c1',nan,...
+		'ratioSlow50_c1',nan,...
+		'ratioSlow45_c1',nan,...
+		'range10_90_c1',nan,...
+		'range5_95_c1',nan,...
+		'ratioRegular1_c1',nan,...
+		'ratioRegular3_c1',nan,...
+		'ratioRegular5_c1',nan,...
+		'ratioRegular10_c1',nan,...
+		'ratioRegular20_c1',nan,...
+		'ratioRegular10_bestPart_c1',nan,...
+		'ratioRegular10_worstPart_c1',nan,...
+		'ratioRegular10_PartDiff_c1',nan,...
+		'n_hist_50_c1',nan,...
+		'n_hist_20_c1',nan,...
+		'n_hist_all_c1',nan,...
+		'hist_n_diag_c1',nan,...
+		'hist_ratio_diag_c1',nan,...
+		'mean_mov_av_diff_c1',nan, ...
+		'mean_mov_diff_c1',nan, ...
+		'ratio_mean_mov_diff_10_c1',nan ...
+);
+nevents=length(QRS)-length(noiseBeats);
+qrs4bci=QRS;
+qrs4bci(noiseBeats)=NaN;
+bci=diff(qrs4bci)/fs;
+
+hrs=60./bci(isfinite(bci) & bci>0);
+hrs_hist=hist(hrs,mean(hrs)*(0.5:0.1:1.5))/length(hrs);
+rhythmres.n_hist=length(find(hrs_hist>max(hrs_hist)*0.2));
+rhythmres.hist_gap=double(~isempty(find(diff(hrs_hist(6:end)>0)>0, 1)));
+
+hrs_hist2=hist(hrs,mean(hrs)*(0.5:0.05:1.5))/length(hrs);
+rhythmres.n_hist2=length(find(hrs_hist2>max(hrs_hist2)*0.2));
+
+amps4hist=amps(noNoiseBeats);
+amps_hist=hist(amps4hist,mean(amps4hist)*(0.5:0.1:1.5))/length(amps4hist);
+rhythmres.n_amps=length(find(amps_hist>max(amps_hist)*0.2));
+
+widths4hist=widths(noNoiseBeats);
+widths_hist=hist(widths4hist,mean(widths4hist)*(0.5:0.1:1.5))/length(widths4hist);
+rhythmres.n_widths=length(find(widths_hist>max(widths_hist)*0.2));
+
+if ~isempty(avbeats) && isfield(avbeats,'isEctopicClass')
+	ectopicClasses=find(avbeats.isEctopicClass);
+else
+    ectopicClasses=[];
+end
+ectopicBeats=[];
+if ~isempty(ectopicClasses)
+	ectopicSCs=avbeats.SC(ectopicClasses);
+	ectopicSCs(ectopicSCs==1)=[];	
+	if ~isempty(ectopicSCs)
+		ectopicBeats=find(ismember(classes,ectopicSCs));
+		
+% 		fh=figure; plot(avbeats.seq{ectopicClasses(1)})
+% 		text(0,nan,['n ectopic beats = ',int2str(rhythmres.Nectopic)]);
+% 		keyboard;
+% 		delete(fh);
+	end
+end
+rhythmres.Nectopic=length(ectopicBeats);
+
+% fh=figure;
+% hist(hrs,mean(hrs)*[0.5:0.1:1.5]);
+% text(mean(hrs)*0.5,1,['n hist: ',int2str(rhythmres.n_hist)]);
+% text(mean(hrs)*0.5,2,['has gap: ',int2str(rhythmres.hist_gap)]);
+% keyboard;
+% hist(hrs,mean(hrs)*[0.5:0.05:1.5]);
+% keyboard;
+% hist(amps,mean(amps)*[0.5:0.05:1.5]);
+% keyboard;
+% hist(widths,mean(widths)*[0.5:0.05:1.5]);
+% keyboard;
+% delete(fh);
+
+
+
+mean_BCI=mean(bci(isfinite(bci)));
+rhythmres.hrtrt=60/mean_BCI;
+% Anzahl der Subklassen 
+rhythmres.Nscs=length(unique(classes(noNoiseBeats)));
+inds_main_sc=find(classes==1);
+inds_not_main_sc=find(classes~=1);
+inds_sc_2=find(classes==2);
+inds_sc_3=find(classes==3);
+
+% GSc 2017-05-26 Gini coefficients
+classes_tabulated=tabulate(classes);
+if ~isempty(classes_tabulated)
+	inds_sc_gini = ginicoeff(classes_tabulated(:,2));
+% BCI_gini=ginicoeff(bci); redundant
+	seqLength=numel(seq)/fs;
+	rhythmres.Nscs_1per10s=length(find(round(classes_tabulated(:,2)*10/seqLength)>=1)); % those classes which have at least one event in 10 seconds
+	rhythmres.majorel=round(length(inds_main_sc)/nevents*100);   
+	rhythmres.otherel=round(length(inds_not_main_sc)/nevents*100);   
+	rhythmres.sc_2=round(length(inds_sc_2)/nevents*100);   
+	rhythmres.sc_3=round(length(inds_sc_3)/nevents*100);   
+	rhythmres.sc_gini=inds_sc_gini;
+else
+	rhythmres.Nscs_1per10s=0; % those classes which have at least one event in 10 seconds
+	rhythmres.majorel=0;   
+	rhythmres.otherel=100;   
+	rhythmres.sc_2=0;   
+	rhythmres.sc_3=0;   
+	rhythmres.sc_gini=nan;
+% 	rhythmres.BCI_gini=nan;
+end
+
+PVCa=0; PVCs=0; PVCv=0; PVCc=0; PVCz=0; PVCp=0; 						% Initialisierung der # gefundener premature beats
+
+% Premajure beats detection
+% a) relativ zum aktuellen BCI und zum vorigen BCI
+dBCI=diff(bci);
+dBCI_rel=dBCI./bci(1:end-1);
+dBCI_rel=[0,dBCI_rel];
+dBCI_rel(isnan(classes))=nan; % GSc 2017-06-24 to avoid interpretation of Nan class beats
+
+% -------- Find premature beats
+premajure_inds=find(dBCI_rel<-premrel/100);       					% alle Events mit relativer Vorzeitigkeit
+postmajure_inds=find(dBCI_rel > premrel/100);       					% alle Events mit relativer Nachzeitigkeit
+
+% premajure_inds=premajure_inds(bci(premajure_inds)<premabs);				% auch abs. muss kleiner schwelle sein
+premajure_inds=premajure_inds(bci(premajure_inds)<premabs)+1;				% GSc 2017-05-27 - take next one to account for diff operation above
+postmajure_inds=postmajure_inds(bci(postmajure_inds)>premabs)+1;			% GSc 2017-05-27 - take next one to account for diff operation above
+
+if 0
+    dBCI_rel_diff=[nan,diff(dBCI_rel)];
+    if isfield(pars.rhythmclass,'d2Prematurity') && pars.rhythmclass.d2Prematurity ~= 0 % GSc 2017-07-12
+        premature_inds_dd=find(dBCI_rel_diff(premajure_inds) < pars.rhythmclass.d2Prematurity);
+        premajure_inds=premajure_inds(premature_inds_dd);
+    end
+    if isfield(pars.rhythmclass,'d2Postmaturity') && pars.rhythmclass.d2Postmaturity ~= 0 % GSc 2017-07-12
+        postmature_inds_dd=find(dBCI_rel_diff(postmajure_inds) > pars.rhythmclass.d2Postmaturity);
+        postmajure_inds=postmajure_inds(postmature_inds_dd);
+    end
+    
+% b) relativ zum Medianen BCI
+% dBCI_rel=(bci-median(bci))/median(bci);
+% premajure_inds=find(dBCI_rel<-premrel/100);       					% alle Events mit relativer Vorzeitigkeit
+end
+if isfield(pars.rhythmclass,'d2Prematurity') && pars.rhythmclass.d2Prematurity ~= 0 && ...
+        isfield(pars.rhythmclass,'d2Postmaturity') && pars.rhythmclass.d2Postmaturity ~= 0
+    % -------- Find premature beats
+    premajure_inds=find(dBCI_rel<-premrel/100);       					% alle Events mit relativer Vorzeitigkeit
+    postmajure_inds=find(dBCI_rel > premrel/100);       					% alle Events mit relativer Nachzeitigkeit
+    ddBCI=diff(dBCI);
+    dddBCI=diff(ddBCI);
+    premajure_inds=premajure_inds(premajure_inds > 2);       					% to prevent problems in the next statements
+    postmajure_inds=postmajure_inds(postmajure_inds > 2);       					% to prevent problems in the next statements
+    prepostmajure_inds=find(dddBCI<-1);       					% pre & post in a row as reflected by 3d derivative
+
+    premajure_inds=premajure_inds(find(ddBCI(premajure_inds-2) < pars.rhythmclass.d2Prematurity))+1;
+    postmajure_inds=postmajure_inds(find(ddBCI(postmajure_inds-2) > pars.rhythmclass.d2Postmaturity))+1;
+else
+	prepostmajure_inds=[];
+end
+if 0
+    figure
+    plot(bci)
+    hold on
+    plot(dBCI);
+    plot(diff(dBCI));
+    plot(diff(diff(dBCI)));
+    plot(dBCI_rel,'--');
+    %        plot(dBCI_rel_diff,'g');
+    plot(premajure_inds,bci(premajure_inds),'or')
+    plot(postmajure_inds,bci(postmajure_inds),'*b')
+    hold off
+    legend({'bci','diff(bci)','diff2(bci)','d3(bci)','dBCI','premature','postmature'});
+end
+
+n_premajure=length(premajure_inds);
+n_postmajure=length(postmajure_inds);
+n_prepostmajure=length(prepostmajure_inds);
+
+% --------- Find stable beats
+stable_bci_inds=find(abs(dBCI_rel)<premrel/100)+1;   					% auf diese beats folgt ein relativ gleichbleibendes Intervall
+
+% --------- Find delayed beats
+delayed_inds=find(dBCI_rel>premrel/100);       					% alle Events mit relativer Vorzeitigkeit
+rhythmres.n_delayed=length(delayed_inds);
+
+% DHa 2015-10-20 max. rel. Amp. fuer atr. premat beats eingefuehrt
+median_amp=median(amps(inds_main_sc));
+max_amp=median_amp*maxRationToMedianAmp;
+
+types='N'*ones(size(QRS));
+types(isnan(classes))='?'; % GSc 2017-06-24 to avoid interpretation of Nan class beats
+types(ectopicBeats)='E';
+%types(delayed_inds+1)='D'; % GSc 2017-07-12 - use postmajure now
+types(postmajure_inds)='D';
+
+for i=1:n_premajure
+%	i_event=premajure_inds(i);
+	i_event=premajure_inds(i);
+
+	previousInds2use=max(1,i_event-nnorm);							
+	cur_nbci=median(bci(previousInds2use));									% ueber nnorm beats gemitteltes Normalintervall
+
+	if dBCI_rel(i_event-1)<-premrel/100							% Vorzeitig auch im Vergleich zum mittleren Erwartungsintervall - echter PB
+		% vorangegangener beat nicht übermäßig länger
+		if i_event>1 && types(i_event-1)==types(i_event) && types(i_event)~='V'
+			% gl type und noch undifferenziert bzw. nicht nach einem interponierten Schlag
+			
+			if classes(i_event)==1 && amps(i_event) <= max_amp							% GS 2001-04-24 - Subklasse 1 statt nur gleiche Subklassen 
+				types(i_event)='A';
+			else														% verschieden Morphologie - Annahme PVCv
+				types(i_event)='V';
+			end
+			if i_event<nevents 
+				% wenn vorhanden, gleich noch den nächsten anschauen, 
+				% da der bei interponierten PCs unter Umständen gegen-
+				% über dem aktuellen nicht verkürzt ist
+				if types(i_event+1)==types(i_event)							% gleiche Hauptklasse 
+					if dBCI_rel(i_event+1) < -premrel/100		% wieder verkürzt
+						if classes(i_event+1)==classes(i_event-1) &&...
+								(bci(i_event+1)+bci(i_event)-cur_nbci)/cur_nbci < relBCIdiffCouplet
+							PVCz=PVCz+1;								% zwischen zwei gleichen beats und nicht wesentlich länger 
+							types(i_event)='Z';								% als der Normalabstand oder kürzer -> interpoliert
+						elseif classes(i_event+1)==classes(i_event)
+							PVCc=PVCc+1;								% gleiche (deviante) Morphologie -> couplet
+							types(i_event+1)='C';
+						else											% drei verschiedene Morphologien -> polymorphism
+							PVCp=PVCp+1;
+							types(i_event+1)='P';
+						end
+					else   
+% % % 						if classes(i_event+1)==classes(i_event) && types(i_event)=='A'				% PAC, gleiche Morphologie -> kompensatorische Pause?
+% % % 							rcopa(length(rcopa)+1)=dBCI_rel(i_event+1);
+% % % 						end
+					end    % if next_bci_rel < - pp.rhythmclass.premrel/100
+				else  % if next_mc==cur_mc  
+				   % andere Hauptklasse - nicht vergleichbar
+				end   % if next_mc==cur_mc  
+			else     % if i_event<length(sig.raw.dlist(:,1))
+				% letzter verfügbarer beat
+			end  % if i_event<length(sig.raw.dlist(:,1))
+		else % if prev_mc==cur_mc &....
+			% nicht wirklich vergleichbar, da andere Hauptklasse oder bereits vorher differenziert
+		end % if prev_mc==cur_mc &....
+	else  % if cur_bci_rel<-pp.rhythmclass.premrel/100 
+		% möglicherweise ein Normalschlag, der auf eine kompensatorische Pause folgt
+	end    % if cur_bci_rel<-pp.rhythmclass.premrel/100 
+end   
+
+indsNoise1=noiseBeats;
+if 0 % GSc 2017-07-27 - seems to interfer with spike and noise detection
+indsNoise2=noiseBeats+1;
+indsNoise=[indsNoise1,indsNoise2];
+indsNoise(indsNoise>length(QRS))=[];
+types(indsNoise)='?';
+else
+    types(indsNoise1)='?';
+end
+% Other-Rhythm-Patterns identifizieren 
+% Patterns von allen Sigs, wobei E auch in der Hauptklasse gesucht wurde
+nOPatterns_2letters=sum([...ACHTUNG: Die Gewichtung ist ein "Kurzschluss" - sortiert nach haeufigkeit
+		pars.rhythm.weight_EV*length(strfind(types,'EV')),...1
+		pars.rhythm.weight_DE*length(strfind(types,'DE')),...4
+		pars.rhythm.weight_ED*length(strfind(types,'ED'))...7
+	]);
+nOPatterns_3letters=max([...ACHTUNG: Die Gewichtung ist ein "Kurzschluss" - sortiert nach haeufigkeit
+		pars.rhythm.weight_EVN*length(strfind(types,'EVN')),...1
+		pars.rhythm.weight_NEV*length(strfind(types,'NEV')),...7
+		pars.rhythm.weight_DNE*length(strfind(types,'DNE')),...7
+		pars.rhythm.weight_EDE*length(strfind(types,'EDE')),...15
+		pars.rhythm.weight_DED*length(strfind(types,'DED')),...12
+		pars.rhythm.weight_NED*length(strfind(types,'NED')),...9
+		pars.rhythm.weight_EDN*length(strfind(types,'EDN'))...6
+	]);
+nOPatterns_4letters=sum([...ACHTUNG: Die Gewichtung ist ein "Kurzschluss" - sortiert nach haeufigkeit
+		pars.rhythm.weight_NEDE*length(strfind(types,'NEDE')),...7
+		pars.rhythm.weight_EDNE*length(strfind(types,'EDNE')),...7
+		pars.rhythm.weight_DNED*length(strfind(types,'DNED')),...6
+		pars.rhythm.weight_DEDE*length(strfind(types,'DEDE')),...9
+		pars.rhythm.weight_EDED*length(strfind(types,'EDED')),...10
+		pars.rhythm.weight_NNED*length(strfind(types,'NNED')),...1
+		pars.rhythm.weight_NEDN*length(strfind(types,'NEDN'))...1
+	]);
+nPattern_AD_in_Ns=sum([...Nicht so spezifisch, aber viel haeufiger...
+	length(strfind(types,'NNNNAD')),...
+	length(strfind(types,'NNNADN')),...
+	length(strfind(types,'NNADNN')),...
+	length(strfind(types,'NADNNN')),...
+	length(strfind(types,'ADNNNN'))]);
+
+rhythmres.nPattern_EV=length(strfind(types,'EV'));
+rhythmres.nPattern_DE=length(strfind(types,'DE'));
+rhythmres.nPattern_ED=length(strfind(types,'ED'));
+
+rhythmres.nPattern_EVN=length(strfind(types,'EVN'));
+rhythmres.nPattern_NEV=length(strfind(types,'NEV'));
+rhythmres.nPattern_DNE=length(strfind(types,'DNE'));
+rhythmres.nPattern_EDE=length(strfind(types,'EDE'));
+rhythmres.nPattern_DED=length(strfind(types,'DED'));
+rhythmres.nPattern_NED=length(strfind(types,'NED'));
+rhythmres.nPattern_EDN=length(strfind(types,'EDN'));
+
+rhythmres.nPattern_NEDE=length(strfind(types,'NEDE'));
+rhythmres.nPattern_EDNE=length(strfind(types,'EDNE'));
+rhythmres.nPattern_DNED=length(strfind(types,'DNED'));
+rhythmres.nPattern_DEDE=length(strfind(types,'DEDE'));
+rhythmres.nPattern_EDED=length(strfind(types,'EDED'));
+rhythmres.nPattern_NNED=length(strfind(types,'NNED'));
+rhythmres.nPattern_NEDN=length(strfind(types,'NEDN'));
+
+rhythmres.nOPatterns_2letters=nOPatterns_2letters;
+rhythmres.nOPatterns_3letters=nOPatterns_3letters;
+rhythmres.nOPatterns_4letters=nOPatterns_4letters;
+rhythmres.nPattern_AD_in_Ns=nPattern_AD_in_Ns;
+
+change_inds=find([1,diff(classes),1]);
+n_ident=diff(change_inds);
+classes_ident=classes(change_inds(1:end-1));
+n_ident(n_ident>5)=9;
+n_ident_str=char(n_ident+48);
+rhythmres.nPattern_1111=length(strfind(n_ident_str,'1111'));
+rhythmres.nPattern_1212=length(strfind(n_ident_str,'1212'));
+rhythmres.nPattern_1313=length(strfind(n_ident_str,'1313'));
+rhythmres.nPattern_1414=length(strfind(n_ident_str,'1414'));
+rhythmres.nPattern_134134=...
+	length(strfind(n_ident_str,'1414'))+...
+	length(strfind(n_ident_str,'1313'))+...
+	length(strfind(n_ident_str,'1314'))+...
+	length(strfind(n_ident_str,'1413'));
+rhythmres.nPattern_121212=length(strfind(n_ident_str,'121212'));
+rhythmres.nPattern_131313=length(strfind(n_ident_str,'131313'));
+rhythmres.nPattern_141414=length(strfind(n_ident_str,'141414'));
+rhythmres.nPattern_134134134=...
+	length(strfind(n_ident_str,'141414'))+...
+	length(strfind(n_ident_str,'141413'))+...
+	length(strfind(n_ident_str,'141314'))+...
+	length(strfind(n_ident_str,'141313'))+...
+	length(strfind(n_ident_str,'131414'))+...
+	length(strfind(n_ident_str,'131413'))+...
+	length(strfind(n_ident_str,'131314'))+...
+	length(strfind(n_ident_str,'131313'));
+
+% nach patterns N?N?... suchen
+n_ident_str(classes_ident==1)='8';		% Hauptklasse mit 8 codieren
+rhythmres.nPattern_N1N1=length(strfind(n_ident_str,'1818'));
+rhythmres.nPattern_N1N1N1=length(strfind(n_ident_str,'181818'));
+
+if isfield(pars.rhythmclass,'n_bci_xcreases_in_a_row_max') && pars.rhythmclass.n_bci_xcreases_in_a_row_max > 0
+    % GSc 2017-07-16 - try new feature based on BCI increases / decreases in a row to differenciate between AF and Other
+    rhythmres.imbalance=sum(sign(dBCI_rel).*(abs(dBCI_rel)>0.1),'omitnan');
+    rhythmres.imbalance_rel=rhythmres.imbalance/numel(dBCI_rel);
+    rhythmres.imbalance1=sum(sign(dBCI),'omitnan');
+    rhythmres.imbalance1_rel=rhythmres.imbalance1/numel(dBCI);
+    
+    d=sign(dBCI);
+    s_increase=char(repmat('_',1,length(d)));
+    s_increase(d==1)=' ';
+    [str,matches]=split(s_increase);
+    str_length=cellfun(@length,str);
+    for n = 1:pars.rhythmclass.n_bci_xcreases_in_a_row_max
+        I_longEnough=str_length>=max(1,n);
+        eval(['rhythmres.N_bci_increases_',int2str(n),'_times = sum(I_longEnough);']); % number of sequences
+    end
+    rhythmres.N_bci_increase_max=max(str_length); % longest sequence of increases
+    
+    s_decrease=char(repmat('_',1,length(d)));
+    s_decrease(d==-1)=' ';
+    [str,matches]=split(s_decrease);
+    str_length=cellfun(@length,str);
+    for n = 1:pars.rhythmclass.n_bci_xcreases_in_a_row_max
+        I_longEnough=str_length>=max(1,n);
+        eval(['rhythmres.N_bci_decreases_',int2str(n),'_times = sum(I_longEnough);']); % number of sequences
+    end
+    rhythmres.N_bci_decrease_max=max(str_length); % longest sequence of decreases
+else
+	rhythmres.imbalance=NaN;
+    rhythmres.imbalance_rel=NaN;
+    rhythmres.imbalance1=NaN;
+    rhythmres.imbalance1_rel=NaN;
+    rhythmres.N_bci_increase_max=NaN;
+    rhythmres.N_bci_decrease_max=NaN;
+end
+
+
+rhythmres.n_premajure=n_premajure;
+rhythmres.n_postmajure=n_postmajure;
+rhythmres.n_prepostmajure=n_prepostmajure;
+rhythmres.perc_premajure=n_premajure/nevents*100;
+rhythmres.perc_postmajure=n_postmajure/nevents*100;
+rhythmres.perc_regular=length(stable_bci_inds)/nevents*100;
+rhythmres.NDelayed=length(find(types=='D'));
+rhythmres.NPa=length(find(types=='A'));
+rhythmres.NPv=length(find(types=='V'));
+
+% DHa 2017-04-18 Neue Methoden mit allerlei Ansaetzen, die ausschliesslich
+% auf RR-Intervallen insgesamt oder RR-Intervallen von Beats mit SC = 1
+% basieren
+hist_grid={[0,40:5:140,200],[-200,-100,-45:5:45,100,200]};
+res=table;
+
+all_hrs=60./bci;
+hrs=all_hrs(isfinite(all_hrs));
+n_beats=length(hrs);
+if n_beats>3
+	hr=median(hrs);
+	major_bci=60/hr;
+	bcis=60./hrs;
+
+	rhythmres.ratioInterpolated=length(find(  abs(bcis(1:end-1)+bcis(2:end)-major_bci)<0.1  ))/n_beats;
+	pattern=char('R'*ones(1,n_beats));
+	pattern((hrs-hr)>pars.rhythmclass.hr_diff_regular)='p';
+	pattern((hrs-hr)<-pars.rhythmclass.hr_diff_regular)='d';
+	Rs=find(pattern=='R');
+	longestNormalSeq=max(find(diff([diff(find(pattern=='R'))==1,0])<0)-...
+		find(diff([0,diff(find(pattern=='R'))==1])>0));
+
+	if isempty(longestNormalSeq) || ~isfinite(longestNormalSeq)
+		longestNormalSeq=0;
+	else
+		longestNormalSeq=longestNormalSeq+2;
+	end
+	rhythmres.longestNormalSeq=longestNormalSeq;
+
+	rhythmres.nRPDR=length(strfind(pattern,'RpdR'));
+	rhythmres.nRPPR=length(strfind(pattern,'RppR'));
+	rhythmres.nDDPP=length(strfind(pattern,'ddpp'));
+	rhythmres.nRPPDDR=length(strfind(pattern,'RppddR'));
+	rhythmres.nRPPDR=length(strfind(pattern,'RppdR'));
+	rhythmres.nRPRP=length(strfind(pattern,'RpRp'));
+% 			res.nPatternMax=max([res.nRPDR,res.nRPPR,res.nDDPP,res.nRPPDDR,res.nRPPDR,res.nRPRP]);
+% 			res.nPatternSum=sum([res.nRPDR,res.nRPPR,res.nDDPP,res.nRPPDDR,res.nRPPDR,res.nRPRP]);
+	rhythmres.nPatternMax=max([rhythmres.nRPDR,rhythmres.nDDPP,rhythmres.nRPPDR,rhythmres.nRPRP]);
+	rhythmres.nPatternSum=sum([rhythmres.nRPDR,rhythmres.nDDPP,rhythmres.nRPPDR,rhythmres.nRPRP]);
+
+	irreg_RR_inds=find(abs(hrs-hr)>pars.rhythmclass.hr_diff_regular);
+	n_irreg=length(irreg_RR_inds);
+	if n_irreg==0
+		rhythmres.ratio_RPDR=0;
+		rhythmres.ratio_RPPR=0;
+		rhythmres.ratio_DDPP=0;
+		rhythmres.ratio_RPPDDR=0;
+		rhythmres.ratio_RPPDR=0;
+		rhythmres.ratio_RPRP=0;
+		rhythmres.iqr_irreg_RRs=0;
+		rhythmres.ratioPatternMax=0;
+		rhythmres.ratioPatternSum=0;
+	else
+		rhythmres.ratio_RPDR=rhythmres.nRPDR/(n_irreg/3);
+		rhythmres.ratio_RPPR=rhythmres.nRPPR/(n_irreg/3);
+		rhythmres.ratio_DDPP=rhythmres.nDDPP/(n_irreg/3);
+		rhythmres.ratio_RPPDDR=rhythmres.nRPPDDR/(n_irreg/3);
+		rhythmres.ratio_RPPDR=rhythmres.nRPPDR/(n_irreg/3);
+		rhythmres.ratio_RPRP=rhythmres.nRPRP/(n_irreg/3);
+		rhythmres.iqr_irreg_RRs=iqr(hrs(irreg_RR_inds));
+		rhythmres.ratioPatternMax=rhythmres.nPatternMax/(n_irreg/3);
+		rhythmres.ratioPatternSum=rhythmres.nPatternSum/(n_irreg/3);
+	end
+else
+	rhythmres.ratioInterpolated=0;
+	rhythmres.nRPDR=0;
+	rhythmres.nRPPR=0;
+	rhythmres.nDDPP=0;
+	rhythmres.nRPPDDR=0;
+	rhythmres.nRPPDR=0;
+	rhythmres.nRPRP=0;
+	rhythmres.nPatternMax=0;
+	rhythmres.nPatternSum=0;
+	rhythmres.ratio_RPDR=0;
+	rhythmres.ratio_RPPR=0;
+	rhythmres.ratio_DDPP=0;
+	rhythmres.ratio_RPPDDR=0;
+	rhythmres.ratio_RPPDR=0;
+	rhythmres.ratio_RPRP=0;
+	rhythmres.iqr_irreg_RRs=0;
+	rhythmres.ratioPatternMax=0;
+	rhythmres.ratioPatternSum=0;
+end
+
+for mode={'all','SC1only'}
+	if strcmp(mode,'SC1only')
+		% Beschraenken auf beats mit CorrelationClass == 1
+		right=find(classes(2:end)==1);
+	else
+		right=find(isfinite(all_hrs));
+	end
+	hrs=all_hrs(right);
+	n_beats=length(hrs);
+
+	if n_beats>3
+		cur_HR_map=[hrs;diff(hrs),0]';
+		cur_HR_preceders=[hrs(1:end-4);hrs(2:end-3);hrs(3:end-2);...
+			hrs(4:end-1);hrs(5:end)];
+		mov_av=mean(cur_HR_preceders);
+		mov_diff=range(cur_HR_preceders);
+
+
+		[nBeatsPerBar,BarEdges]=histcounts(hrs,[40:10:200]);
+		[~,majorBar]=max(nBeatsPerBar);
+		hr=median(hrs(hrs>BarEdges(majorBar)&hrs<BarEdges(majorBar+1)));
+
+		res.mean_mov_diff=mean(mov_diff);
+		res.ratio_mean_mov_diff_10=length(find(abs(mov_diff)>pars.rhythmclass.hr_diff_regular))/(n_beats-4);
+		res.mean_mov_av_diff=mean(abs(mov_av-hr));
+		res.hr1=hr;
+		res.nBeats=n_beats;
+		res.hr2=median(hrs);
+		res.hr_diff=res.hr1-res.hr2;
+		res.stds=std(hrs);
+		res.iqrs=iqr(hrs);
+		res.ratioNormal45_100_smooth=(n_beats - ...
+			length(find(hrs>=110              | hrs <= 45)) - ...
+			length(find((hrs>100 & hrs < 110) | (hrs>45 & hrs<50)))*pars.rhythmclass.hr_smooth_factor)...
+			/n_beats;
+		res.ratioNormal45_100=length(find(hrs<100 & hrs>45))/n_beats;
+		res.ratioFast120=length(find(hrs>120))/n_beats;
+		res.ratioFast110=length(find(hrs>110))/n_beats;
+		res.ratioFast105=length(find(hrs>105))/n_beats;
+		res.ratioFast100=length(find(hrs>100))/n_beats;
+		res.ratioFast95=length(find(hrs>95))/n_beats;
+		res.ratioFast90=length(find(hrs>90))/n_beats;
+		res.ratioSlow60=length(find(hrs<60))/n_beats;
+		res.ratioSlow55=length(find(hrs<55))/n_beats;
+		res.ratioSlow50=length(find(hrs<50))/n_beats;
+		res.ratioSlow45=length(find(hrs<45))/n_beats;
+		res.range10_90=prctile(hrs,90)-prctile(hrs,10);
+		res.range5_95=prctile(hrs,95)-prctile(hrs,5);
+		res.ratioRegular1=length(find(abs(hrs-hr)<1))/n_beats;
+		res.ratioRegular3=length(find(abs(hrs-hr)<3))/n_beats;
+		res.ratioRegular5=length(find(abs(hrs-hr)<5))/n_beats;
+		res.ratioRegular10=length(find(abs(hrs-hr)<10))/n_beats;
+		res.ratioRegular20=length(find(abs(hrs-hr)<20))/n_beats;
+
+	% Nur 1/3 beruecksichtigen	
+	% 	ratioRegular10_start=length(find(abs(hrs(1:floor(n_beats/3))-hr)<10))/floor(n_beats/3);
+	% 	ratioRegular10_middle=length(find(abs(hrs(ceil(n_beats/3):floor(2*n_beats/3))-hr)<10))/floor(n_beats/3);
+	% 	ratioRegular10_end=length(find(abs(hrs(ceil(2*n_beats/3):end)-hr)<10))/floor(n_beats/3);
+
+	% 1/3 weglassen - vermutlich besser
+		ratioRegular10_start=length(find(abs(hrs(1:floor(2*n_beats/3))-hr)<pars.rhythmclass.hr_diff_regular))/floor(2*n_beats/3);
+		ratioRegular10_middle=length(find(abs(hrs([1:ceil(n_beats/3),floor(2*n_beats/3):end])-hr)<pars.rhythmclass.hr_diff_regular))/floor(2*n_beats/3);
+		ratioRegular10_end=length(find(abs(hrs(ceil(n_beats/3):end)-hr)<pars.rhythmclass.hr_diff_regular))/floor(2*n_beats/3);
+
+		res.ratioRegular10_bestPart=max([ratioRegular10_start,ratioRegular10_middle,ratioRegular10_end]);
+		res.ratioRegular10_worstPart=min([ratioRegular10_start,ratioRegular10_middle,ratioRegular10_end]);
+		res.ratioRegular10_PartDiff=res.ratioRegular10_bestPart-res.ratioRegular10_worstPart;
+
+		% Histogramm-basierte Parameter
+		[n_per_bar,~]=hist3(cur_HR_map,hist_grid);
+		[nmax_per_row,~]=max(n_per_bar);
+		[nmax,~]=max(nmax_per_row);
+		row_max=12;
+		[~,col_max]=max(n_per_bar(:,row_max));
+
+
+		res.n_hist_50=length(find(n_per_bar>nmax/2));
+		res.n_hist_20=length(find(n_per_bar>nmax/5));
+		res.n_hist_all=length(find(n_per_bar>0));
+
+		% Count bars with beats along the diagonale
+		d_inds1=[(21:-1:3)',(3+(col_max-row_max):21+(col_max-row_max))'];
+		d_inds2=[(21:-1:3)',(4+(col_max-row_max):22+(col_max-row_max))'];
+		d_inds3=[(21:-1:3)',(2+(col_max-row_max):20+(col_max-row_max))'];
+		diag_inds=[d_inds1;d_inds2;d_inds3];
+		diag_inds(diag_inds(:,2)<=3 | diag_inds(:,2)>21,:)=[];
+		diag_inds=[1,23; 2,23; 1,22; 2,22;22,2;22,1;23,2;23,1;diag_inds];
+		ids=(diag_inds(:,2)-1)*23+diag_inds(:,1);
+		res.hist_n_diag=length(find(n_per_bar(ids)));
+		res.hist_ratio_diag=length(find(n_per_bar(ids)))/length(find(n_per_bar>0));
+	else % if nbeat > 3
+		res.nBeats=n_beats;
+		res.stds=100;
+		res.iqrs=100;
+		res.ratioNormal45_100=0;
+		res.ratioFast120=0;
+		res.ratioFast100=0;
+		res.ratioFast90=0;
+		res.ratioFast80=0;
+		res.ratioFast70=0;
+		res.ratioFast60=0;
+		res.ratioSlow60=0;
+		res.ratioSlow55=0;
+		res.ratioSlow50=0;
+		res.ratioSlow45=0;
+		res.range10_90=300;
+		res.range5_95=300;
+		res.ratioRegular3=0;
+		res.ratioRegular5=0;
+		res.ratioRegular10=0;
+		res.ratioRegular20=0;
+		res.n_hist_50=0;
+		res.n_hist_20=0;
+		res.n_hist_all=0;
+		res.hist_n_diag=0;
+		res.hist_ratio_diag=0;
+	end
+	varNames=res.Properties.VariableNames;
+	if strcmp(mode,'all')
+		for k=1:length(varNames)
+			rhythmres.(varNames{k})=res.(varNames{k});
+		end
+	else
+		for k=1:length(varNames)
+			rhythmres.([varNames{k},'_c1'])=res.(varNames{k});
+		end
+	end
+
+end
+% % 
+% % rhythmres.nAnyPattern=min(200,...
+% % 	pars.rhythm.weight_2letters*nOPatterns_2letters+...				1 hat werte zw 0 und 500 (meist 150) > 0 selten N
+% % 	pars.rhythm.weight_3letters*nOPatterns_3letters+...				1 hat werte zw 0 und 500 (meist 100) > 0 selten N
+% % 	pars.rhythm.weight_4letters*nOPatterns_4letters+...				1 hat werte zw 0 und 1600 (meist 100) > 0 selten N	
+% % 	pars.rhythm.weight_1x1x*max(0,rhythmres.nPattern_1212-4)+...		3 hat werte zw 0 und 15. > 0 selten N
+% % 	pars.rhythm.weight_1x1x*rhythmres.nPattern_1313+...		3 hat werte zw 0 und 6.  > 0 selten N
+% % 	pars.rhythm.weight_1x1x*rhythmres.nPattern_1414+...		3 hat werte zw 0 und 8.  > 0 selten N
+% % 	pars.rhythm.weight_1x1x*max(0,rhythmres.nPattern_134134-2)+...		1 hat werte zw 0 und 6.  > 0 nie N
+% % 	pars.rhythm.weight_1x1x1x*max(0,rhythmres.nPattern_121212-2)+...	10 hat werte zw 0 und 13. > 0 selten N
+% % 	pars.rhythm.weight_1x1x1x*rhythmres.nPattern_131313+...	10 hat werte zw 0 und 5.  > 0 selten N
+% % 	pars.rhythm.weight_1x1x1x*rhythmres.nPattern_141414+...	10 hat werte zw 0 und 6.  > 0 nie N
+% % 	pars.rhythm.weight_1x1x1x*max(0,rhythmres.nPattern_134134134-1)+...	5 hat werte zw 0 und 5.  > 0 selten N
+% % 	pars.rhythm.weight_N1N1*max(0,rhythmres.nPattern_N1N1-10) + ...	1/5 hat werte zw 0 und 38. > 5 nie N
+% % 	pars.rhythm.weight_N1N1N1*rhythmres.nPattern_N1N1N1 + ...	1/5 hat werte zw 0 und 37. > 4 nie N
+% % 	pars.rhythm.weight_nPatternSum*rhythmres.nPatternSum);				% 1 hat werte zw. 0 und 3 - eigentlich nicht mit O:N korreliert
+% % % 	nPattern_AD_in_Ns+...				hat werte zw 0 und 50. > 0 selten N (noch mehr bei > 5)
+
+rhythmres.nAnyPattern=...
+	min(20,...
+	rhythmres.nPattern_AD_in_Ns*0.1+...
+	rhythmres.ratio_RPPDR*1+...
+	rhythmres.ratio_DDPP*1+...
+	rhythmres.nRPDR*1+...
+	rhythmres.nOPatterns_2letters*1+...
+	rhythmres.nOPatterns_3letters+...
+	rhythmres.nOPatterns_4letters);
+rhythmres.isOtherRhythm=...
+	double(rhythmres.ratioSlow50>50) + ...
+	double(rhythmres.ratioFast100>50) + ...
+	double(rhythmres.nRPDR > 1) + ...
+	double(rhythmres.nPattern_1313 > 1) +...
+	double(rhythmres.nPattern_1212 > 1) +...
+	double(rhythmres.nPattern_1414 > 1) +...
+	double(rhythmres.nOPatterns_2letters > 10) + ...
+	double(rhythmres.nOPatterns_3letters > 10) + ...
+	double(rhythmres.nOPatterns_4letters > 10) + ...
+	double(0.5 * (rhythmres.nPattern_AD_in_Ns > 2));
+
+% 
+% fh=figure('Position',[10,300,1000,400]); 
+% plot(seq);
+% line(QRS,seq(QRS),'Color','r','marker','*','linestyle','none');
+% line(QRS(2:end),dBCI_rel,'Color','k');
+% line(QRS,widths,'Color','g');
+% text(QRS,ones(size(QRS)),int2str(classes'));
+% disp(char(types));
+% keyboard;
+% delete(fh);

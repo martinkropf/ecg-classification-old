@@ -1,0 +1,391 @@
+function [tab,F1_scores]=train_model(treeTemplate,nTrees,pars,PROC_PARALLEL,RE_CALC_ECGS,N_MODEL)
+
+F1_scores=[];
+if nargin<1 || isempty(treeTemplate)
+	treeTemplate = templateTree(...
+		'Surrogate',2,...					'off' (default) | 'on' | 'all' | positive integer value
+		'MaxNumSplits',10000,...				default: n-1
+		'NumVariablesToSample',10,...		'all' | a number (default: sqrt(nFeatures))
+		'MergeLeaves','off',...				'on' | 'off'
+		'MinLeaf',1,...
+		'Prune','on',...					'on' | 'off'
+		'PruneCriterion','impurity',...		'error' | 'impurity'
+		'SplitCriterion','deviance',...		'gdi' | 'twoing' | 'deviance'
+		'PredictorSelection','allsplits',...'allsplits' | 'curvature' | 'interaction-curvature'
+		'AlgorithmForCategorical','Exact',... 'Exact' | 'PullLeft' | 'PCA' | 'OVAbyClass'
+		'MaxNumCategories',30, ...			default: 10
+		'QuadraticErrorTolerance',10^-4 ...	default: 10^-4
+		);
+else
+	treeTemplate=[];
+end
+if nargin<2 || isempty(nTrees)
+	nTrees=1000;
+end
+if nargin<3 || isempty(pars)
+	pars=get_pars(300); % fs = 300 Hz
+end
+if nargin<4 || isempty(PROC_PARALLEL)
+	PROC_PARALLEL = 0;
+end
+if nargin<5 || isempty(RE_CALC_ECGS)
+	RE_CALC_ECGS=1;		% set to 1 for final training and 1 for test
+end
+if nargin<6 || isempty(N_MODEL)
+	N_MODEL=5;
+end
+
+disp('------------ feature extraction ---------------- ');REBUILD_MODEL=1;		% set to 1 for final training and 1 for test
+N_SPLIT =5;		% set to 1 for final training and 1 for test
+MIN_P_VALUE = 0;
+%MODEL_TYPE='TreeBagger';
+MODEL_TYPE='Ensemble';
+
+%  	TRAIN_SINGLE_CLASS='N';
+TRAIN_SINGLE_CLASS=[];
+
+DO_NOT_TRAIN_CLASS=[]; % set to '~' to do not train for ~ - does not improve results...
+
+PROCESS_ONLY_TYPE=[];
+CHECK_FEATURE_IMPORTANCE = 0;
+if PROC_PARALLEL
+	curParPool=gcp;
+	if isempty(curParPool)
+		parpool(PROC_PARALLEL);
+	end
+end
+[data_dir,signal_dir]=getLocalProperties();
+
+reffile = [signal_dir, 'REFERENCE.csv'];
+fid = fopen(reffile, 'r');
+if(fid ~= -1)
+	Ref = textscan(fid,'%s %s','Delimiter',',');
+else
+	error(['Could not open ' reffile ' for scoring. Exiting...'])
+end
+fclose(fid);
+
+RECORDS = Ref{1};
+target  = Ref{2};
+
+if ~isempty(TRAIN_SINGLE_CLASS)
+	if TRAIN_SINGLE_CLASS~='N'
+		target(~strcmp(target,TRAIN_SINGLE_CLASS))={'N'};
+	else
+		target(~strcmp(target,TRAIN_SINGLE_CLASS))={'O'};
+	end
+end
+
+
+%Nur bestimmte Klassen auswählen
+if ~isempty(PROCESS_ONLY_TYPE)
+	right_inds=strmatch(PROCESS_ONLY_TYPE,Ref{2});
+	RECORDS = RECORDS(right_inds);
+	target=target(right_inds);
+	N=length(right_inds);
+end
+
+if RE_CALC_ECGS
+	
+	% Calculate results for first file just to test code and to get an
+	% empty record with all varNames
+	[res_file1,dataPerBeat_file1]=ait_challenge_8([signal_dir, RECORDS{1}],pars);
+	varNames=res_file1.Properties.VarNames;
+	for i=1:length(varNames)
+		ds{i}=0;
+	end
+	% initialize res_dataset with zeros
+	res_dataset=cell2dataset(ds,'VarNames',varNames);
+	for i=1:length(varNames)
+		res_dataset.(varNames{i})=zeros(length(RECORDS),1);
+	end
+	
+	% initialize only one entry of datasetPerBeat with zeros
+	perBeatVarNames=dataPerBeat_file1.Properties.VarNames;
+	emptyDS={};
+	for i=1:length(perBeatVarNames)
+		emptyDS{i}=0;
+	end
+	datasetPerBeat=cell2dataset(emptyDS,'VarNames',perBeatVarNames);
+	beatCnt=0;
+	tic;
+	if PROC_PARALLEL
+		dataPerBeat_cell=cell(length(RECORDS),1);
+		parfor i = 1:length(RECORDS)
+			fname = RECORDS{i};
+			try
+				[res_dataSingleFile,dataPerBeat_cell{i}]=ait_challenge_8([signal_dir,fname],pars);
+				res_dataset(i,:)=res_dataSingleFile;
+			catch e
+				disp(['error processing file ',fname,'(',target(i),') - ',e.getReport]);
+% 				error
+			end
+		end
+		for i=1:length(RECORDS)
+			[nBeats,nPars]=size(dataPerBeat_cell{i});
+			datasetPerBeat(beatCnt+1:beatCnt+nBeats,:)=dataPerBeat_cell{i};
+			beatCnt=beatCnt+nBeats;
+		end
+	else
+% 		wb = waitbar(0,'','Name','Processing ECGs ...');
+		for i = 1:length(RECORDS)
+			fname = RECORDS{i};
+			disp([target{i},': ',fname]);
+% 			waitbar(i/numel(RECORDS),wb,[target{i},': ',fname]);
+			try
+				[res_dataSingleFile,dataPerBeat]=ait_challenge_8([signal_dir,fname],pars);
+				[nBeats,nPars]=size(dataPerBeat);
+				res_dataset(i,:)=res_dataSingleFile;
+				datasetPerBeat(beatCnt+1:beatCnt+nBeats,:)=dataPerBeat;
+				beatCnt=beatCnt+nBeats;
+			catch e
+				disp(e.getReport);
+% 				error
+			end
+		end
+% 		close(wb);
+	end
+	total_time=toc;
+	averageTime = total_time/length(RECORDS);
+	disp(['Generation of validation set completed.',char(10),...
+		'  Total time = ',num2str(total_time),char(10),...
+		'  Average time = ' num2str(averageTime)]);
+	save(fullfile(data_dir,'ait_result_dataset.mat'),'res_dataset');
+	save(fullfile(data_dir,'ait_resultPerBeat_dataset.mat'),'datasetPerBeat');
+else
+	% load previously calculated results
+	load(fullfile(data_dir,'ait_result_dataset.mat'));
+end
+
+
+
+
+disp('------------ starting modelling ---------------- ');
+%% Select features
+% At least 2 different values
+% Splits at least one class from any other
+% --- Bringt nichts....
+disp('selecting features with high p-values');
+vars=res_dataset.Properties.VarNames;
+classes=unique(target);
+vars2use=zeros(length(vars),1);
+
+for i=2:length(vars) % start with 2 to leave out rec-nr
+	%Works also with parfor, but code must be copied in order to support both
+	%options - since MIN_P_VALUE == 0 leads to better results, parfor is not
+	%necessary
+	% parfor i=2:length(vars)
+	j=1;
+	if length(unique(res_dataset.(vars{i})))>1 && ~isempty(find(isfinite(res_dataset.(vars{i}))))
+		%if ~isempty(find(isfinite(res_dataset.(vars{i}))))
+		if MIN_P_VALUE==0
+			vars2use(i)=1;
+		else
+			while j<=length(classes)-1 && vars2use(i)==0
+				% 1) Separate this class from all the rest
+				groups=ones(size(target));
+				groups(strmatch(classes{j},target))=2;
+				p_val=statplot(res_dataset.(vars{i}),groups,'all');
+				if p_val<MIN_P_VALUE && p_val>0
+					disp([vars{i},' - ',num2str(p_val)]);
+					vars2use(i)=1;
+				end
+				% 2) Separate this class form any other
+				k=j+1;
+				while k<=length(classes) && vars2use(i)==0
+					groups=zeros(size(target));
+					groups(strmatch(classes{j},target))=1;
+					groups(strmatch(classes{k},target))=2;
+					p_val=statplot(res_dataset.(vars{i})(find(groups)),groups(find(groups)),'all');
+					if p_val<MIN_P_VALUE && p_val>0
+						disp([vars{i},' - ',num2str(p_val)]);
+						vars2use(i)=1;
+					end
+					k=k+1;
+				end
+				j=j+1;
+			end
+		end
+	end
+	if vars2use(i)==0
+		disp(['variable removed: ', vars{i}]);
+	end
+	
+end
+
+save(fullfile(data_dir,'vars2use.mat'),'vars2use');
+
+res_dataset=res_dataset(:,find(vars2use));
+for i=1:length(pars.pars2ignore)
+	if ~isempty(find(strcmp(res_dataset.Properties.VarNames,pars.pars2ignore{i})))
+		res_dataset.(pars.pars2ignore{i})=[];
+	end
+end
+
+%% Do Modelling
+F1_scores=zeros(N_MODEL,1);
+for m=1:N_MODEL
+
+	if REBUILD_MODEL
+		disp('------------ starting modelling ---------------- ');
+		% in Ref seltene Klassen (Noise) staerker gewichten
+
+		% Weitere Idee:
+		%   In erstem Random Forest nur nach Noise suchen, dann nur auf
+		%   Nicht-Noise-Signale erneut Random Forest anwenden
+
+		classes=unique(target); % waren füher 4 chars...
+		nClasses=length(classes);
+		costsPerClass=zeros(nClasses,1);
+		weights=ones(length(res_dataset),1);
+		for i=1:nClasses
+			weights(strmatch(classes(i),target))=1/length(find(strmatch(classes(i),target)));
+			costsPerClass(i)=1/length(find(strmatch(classes(i),target)));
+		end
+
+		costs=zeros(nClasses,nClasses);
+		for i=1:nClasses
+			for j=1:nClasses
+				costs(i,j)=costs(i,j)+costsPerClass(i)+costsPerClass(j);
+			end
+			costs(i,i)=0;
+		end
+		if ~isempty(DO_NOT_TRAIN_CLASS)
+			costs(strcmp(classes,DO_NOT_TRAIN_CLASS),:)=[];
+			costs(:,strcmp(classes,DO_NOT_TRAIN_CLASS))=[];
+		end
+
+		[nrecords,nfeatures]=size(res_dataset);
+		Y_predicted=cell(nrecords,1);
+		for i=1:N_SPLIT %
+			inds4prediction{i}=floor((i-1)*nrecords/N_SPLIT)+1:floor(i*nrecords/N_SPLIT);
+			if N_SPLIT==1
+				inds4learning{i}=inds4prediction{i};
+			else
+				inds4learning{i}=setdiff(1:nrecords,inds4prediction{i});
+			end
+			if ~isempty(DO_NOT_TRAIN_CLASS)
+				inds4learning{i}(strcmp(target(inds4learning{i}),DO_NOT_TRAIN_CLASS))=[];
+			end
+		end
+		Y_predicted_cell=cell(N_SPLIT,1);
+		if PROC_PARALLEL>0
+			parfor i=1:N_SPLIT
+				[Y_predicted_cell{i}]=doModelling(res_dataset,inds4learning{i},...
+					inds4prediction{i},target,CHECK_FEATURE_IMPORTANCE,MODEL_TYPE,...
+					nTrees,weights,costs,treeTemplate);
+			end
+		else
+			for i=1:N_SPLIT
+				[Y_predicted_cell{i},res_model]=doModelling(res_dataset,inds4learning{i},...
+					inds4prediction{i},target,CHECK_FEATURE_IMPORTANCE,MODEL_TYPE,...
+					nTrees,weights,costs,treeTemplate);
+				% allerletztes wird gespeichert (ueberschreibt das vorher)
+				save(fullfile(data_dir,'last_model.mat'),'res_model');
+			end
+		end
+		for i=1:N_SPLIT
+			Y_predicted(inds4prediction{i})=Y_predicted_cell{i};
+		end
+		if ~PROC_PARALLEL
+			
+		end
+	else
+		% Load last model generated
+		load(fullfile(data_dir,'last_model.mat'));
+		load('vars2use.mat');
+		res_dataset=res_dataset(:,find(vars2use));
+		Y_predicted=predict(res_model,double(res_dataset));
+	end
+
+
+	%% Write results to answers.txt file
+	fid = fopen('answers.txt','w');
+	for i=1:length(RECORDS)
+		fprintf(fid,'%s,%s\r\n',RECORDS{i},Y_predicted{i});
+	end
+	fclose(fid);
+
+	%% Scoring
+	score2017Challenge;
+	F1_scores(m)=F1;
+end
+	
+%% prepare a table that can be used in the classifier app
+tab=dataset2table(res_dataset);
+tab.target=target;
+
+end
+
+
+function [Y_predicted_cell,res_model]=doModelling(res_dataset,inds4learning,...
+				inds4prediction,target,CHECK_FEATURE_IMPORTANCE,...
+				MODEL_TYPE,nTrees,weights,costs,treeTemplate)
+
+	if strcmp(MODEL_TYPE,'Ensemble')
+
+		res_model = fitensemble(...
+			res_dataset(inds4learning,:),...
+			[target{inds4learning}]',...
+			'Bag',...
+			nTrees,...
+			treeTemplate,...
+			'Type','Classification',...
+			'Cost',costs,...
+			'Weights',weights(inds4learning),...
+			'nprint','off');
+		Y_predicted_cell=cellstr(predict(res_model,double(res_dataset(inds4prediction,:))));
+
+		if CHECK_FEATURE_IMPORTANCE
+			featureImportance=predictorImportance(res_model);
+			featureNames=res_dataset.Properties.VarNames;
+			[sort_import,sort_inds]=sort(featureImportance);
+			fh=findobj('Tag','FIFigure');
+			if ~isempty(fh)
+				delete(fh); % immer nur 1 figure darstellen
+			end
+			fh = figure('Tag','FIFigure');
+			ah = axes('Parent',fh,'Tag','FIAxes');
+			try
+				bar(sort_import);
+				set(ah,'XTick',1:length(featureNames),...
+					'xTickLabel',featureNames(sort_inds),...
+					'TickLabelInterpreter','none',...
+					'XTickLabelRotation',60);
+			catch 
+			end
+		end
+		pause(0.001);
+
+	elseif strcmp(MODEL_TYPE,'TreeBagger')
+		if PROC_PARALLEL>0
+			paroptions = statset('UseParallel',true);
+		else
+			paroptions = statset('UseParallel',false);
+		end
+
+		res_model=TreeBagger(...
+			nTrees,...
+			res_dataset(inds4learning,:),...
+			[target{inds4learning}]',...
+			'OOBPred','on',...
+			'NPrint',1,...
+			'MinLeaf',3,...
+			'Prune','off',...
+			'Method','Classification',...
+			'Weights',weights(inds4learning),...
+			'Cost',costs,...
+			'Surrogate','on',...
+			'PredictorSelection','interaction-curvature',... DHa 2017-01-09, was set to 'allsplits' (default) before. Could also be 'curvature'. see https://de.mathworks.com/help/stats/classification-trees-and-regression-trees.html#bvgp2zo-1
+			'OOBVarImp','on',...
+			'Options',paroptions);
+		Y_predicted_cell=predict(res_model,double(res_dataset(inds4prediction,:)));
+
+
+	elseif strcmp(MODEL_TYPE,'interactive')
+		tmp=res_dataset(inds4learning,:);
+		tmp.target=[target{inds4learning}]';
+		train
+	end
+
+end

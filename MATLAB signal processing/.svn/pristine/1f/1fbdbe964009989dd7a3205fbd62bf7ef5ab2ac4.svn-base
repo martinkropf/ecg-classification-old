@@ -1,0 +1,9 @@
+function eval_model()
+    ITERATIONS=10;
+    for idx=1:ITERATIONS
+        disp(['Iteration ',int2str(idx),'/',int2str(ITERATIONS)]);
+        results(idx)=train_model()
+    end
+    results
+    disp(['Final result ',num2str(mean(results))]);
+end

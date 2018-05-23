@@ -1,0 +1,79 @@
+function noise_res=isnoise_cinc2017(ecg,QRS,QRS2,avbeats,types,amps,qrs_widths,atrial_ecg,fs,pars)
+max_sig_amp=pars.isnoise.max_sig_amp;
+max_sig_diff=pars.isnoise.max_sig_diff;
+qrs_amp_range=pars.isnoise.qrs_amp_range;
+qrs_width_range=pars.isnoise.qrs_width_range;
+
+b_spikes1=pars.isnoise.b_spikes1;
+a_spikes1=pars.isnoise.a_spikes1;
+b_spikes2=pars.isnoise.b_spikes2;
+a_spikes2=pars.isnoise.a_spikes2;
+
+nsamp=length(ecg);
+
+% std(atrial_ecg):std(ecg)
+noise_res.atrial_ratio=std(ecg)/std(atrial_ecg);
+
+% Wie fuer QRS2 auch bei QRS Rand-QRS loeschen
+QRS(QRS<fs*0.05)=[];
+QRS(QRS>length(ecg)-0.05*fs)=[];
+
+% HR basierend auf nQRS / nsamp
+noise_res.mean_HR=60*length(QRS2)/(nsamp/fs);
+
+% max. QRS-Pause
+max_pause=
+
+% Konstante Samples
+constant_samples=find(diff(abs(diff(ecg))) == 0);
+constant_samples=find(diff(constant_samples)==0);
+noise_res.ratio_constant=length(constant_samples)/nsamp*100;
+	
+% Samples mit zu gr Amp
+samples_outof_amprange=find(abs(ecg) > max_sig_amp);
+noise_res.ratio_samples_outof_amp=length(samples_outof_amprange)/nsamp*100;
+
+% QRS-Komplexe mit unpassender Amp
+noise_res.ratio_qrs_outof_amp=length(find(amps<qrs_amp_range(1)|amps>qrs_amp_range(2)))/length(amps)*100;
+
+% QRS-Komplexe mit unpassender Width
+noise_res.ratio_qrs_outof_width=length(find(qrs_widths<qrs_width_range(1)|qrs_widths>qrs_width_range(2)))/length(amps)*100;
+
+% Spikes
+diff_out_of_th=double(abs(diff(filtfilt(b_spikes1,a_spikes1,ecg))) > max_sig_diff);
+diff_out_of_th=filtfilt(b_spikes2,a_spikes2,diff_out_of_th);
+samples_outof_diffrange=find(diff_out_of_th > max_sig_diff * 0.1);
+noise_res.ratio_spikes=length(samples_outof_diffrange)/nsamp*100;
+
+% Sig-Amp in unterschiedlichen Fr-Baendern
+fr=pars.isnoise.fr;
+noise_res.p_freq=zeros(length(fr)-1,1);
+for i=1:length(fr)-1
+	fseq=filtfilt(pars.isnoise.b{i},pars.isnoise.a{i},ecg);
+	noise_res.p_freq(i)=std(fseq);
+	noise_res.p_freq_rel(i)=noise_res.p_freq(i)/noise_res.p_freq(1);
+end
+
+% Kombi der obigen Kriterien - wird nicht mehr verwendet 
+right_samples=1:nsamp;
+right_samples=setdiff(right_samples,constant_samples);
+right_samples=setdiff(right_samples,samples_outof_amprange);
+right_samples=setdiff(right_samples,samples_outof_diffrange);
+noise_res.ratio_ok=length(right_samples)/nsamp*100;
+
+% Vergleich der 2 QRS-Dets
+AIT_res_not_found_by_template=ones(size(QRS2));
+n_template_res_not_found_by_AIT=0;
+for i=1:length(QRS)
+	right_ind=find(abs(QRS2-QRS(i))<0.07*fs);
+	if isempty(right_ind)
+		n_template_res_not_found_by_AIT=n_template_res_not_found_by_AIT+1;
+	else
+		AIT_res_not_found_by_template(right_ind)=0;
+	end
+end
+n_AIT_res_not_found_by_template=length(find(AIT_res_not_found_by_template));
+noise_res.ratio_qrs_different=...
+	(n_template_res_not_found_by_AIT+n_AIT_res_not_found_by_template)/...
+	max(length(QRS),length(QRS2))*100;
+	
