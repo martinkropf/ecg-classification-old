@@ -36,7 +36,7 @@ if nargin<3 || isempty(pars)
 	pars=get_pars(300); % fs = 300 Hz
 end
 if nargin<4 || isempty(PROC_PARALLEL)
-	PROC_PARALLEL = 1;
+	PROC_PARALLEL = 0;
 end
 if nargin<5 || isempty(RE_CALC_ECGS)
 	RE_CALC_ECGS=1;		% set to 1 for final training and 1 for test
@@ -67,8 +67,8 @@ if PROC_PARALLEL
 	end
 end
 
-signal_dir='/Users/mk/cinc2017-bak/Datasets/ptbdb_60s/2/';
-reffile = [signal_dir, 'REFERENCE-v3.csv'];
+signal_dir='/Users/mk/cinc2017-bak/Datasets/training2017/';
+reffile = [signal_dir, 'REFERENCE.csv'];
 %reffile = [signal_dir, 'REFERENCE_ptbdb_60s_per_patient_normal.csv'];
 
 fid = fopen(reffile, 'r');
